@@ -1512,7 +1512,10 @@ function getFilleVals(cot) {
 }
 
 const ORDRE_COTATIONS = ['6A','5C+','5C','5B','5A','4C'];
-const NIVEAU_LABELS = ['Maîtrise insuffisante','Maîtrise fragile','Maîtrise satisfaisante','Très bonne maîtrise'];
+const NIVEAU_LABELS = ['½ étoile — 1 voie à moitié','1 étoile — sommet ou 2 moitiés','2 étoiles — 2 sommets','3 étoiles — 3 sommets'];
+const STAR_LABELS_SHORT = ['½★','⭐','⭐⭐','⭐⭐⭐'];
+// SVG demi-étoile inline
+const HALF_STAR_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" style="display:inline-block;vertical-align:-2px"><defs><linearGradient id="hsg"><stop offset="50%" stop-color="var(--star)"/><stop offset="50%" stop-color="none" stop-opacity="0"/></linearGradient></defs><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" fill="url(#hsg)" stroke="var(--star)" stroke-width="1.5"/></svg>`;
 const NIVEAU_CLASSES_RESULT = ['r-insuf','r-fragile','r-satisf','r-bien'];
 const NIVEAU_CLASSES_NOMO = ['cell-insuf','cell-fragile','cell-satisf','cell-bien'];
 
@@ -1744,7 +1747,7 @@ function renderStudentRow(g, s, numCols) {
   const { note, niveau } = computeStudentScore(s);
   const noteStr = note !== null ? note.toString().replace('.', ',') : '—';
   const badgeClass = niveau !== null ? NIVEAU_CLASSES_RESULT[niveau] : 'r-none';
-  const niveauLabel = niveau !== null ? ['Insuf.','Fragile','Satisf.','T. bien'][niveau] : '—';
+  const niveauLabel = niveau !== null ? ['½★','⭐','⭐⭐','⭐⭐⭐'][niveau] : '—';
 
   const afl2 = computeAFL2(s);
   const afl2Cls = afl2 === 0 ? 'zero' : '';
@@ -1993,33 +1996,39 @@ function computeStudentScore(s) {
     if (e.sommet === false) moitiesParCot[e.cot] = (moitiesParCot[e.cot] || 0) + 1;
   }
 
-  // countByCot = étoiles effectives par cotation
-  // Règle : 1 sommet = 1 étoile / 2 moitiés = 1 étoile / 1 moitié seule = 0 point
-  const countByCot = {};
+  // countByCot = niveau d'étoiles effectif par cotation
+  // Nouvelle règle :
+  //   ½★ (niveau 0) = au moins 1 moitié
+  //   ⭐  (niveau 1) = 1 sommet OU 2 moitiés
+  //   ⭐⭐ (niveau 2) = 2 sommets
+  //   ⭐⭐⭐(niveau 3) = 3 sommets
+  const countByCot = {}; // stocke le niveau 0=½★ 1=⭐ 2=⭐⭐ 3=⭐⭐⭐
   for (const cot of ORDRE_COTATIONS) {
     const sommets = sommetsParCot[cot] || 0;
     const moities = moitiesParCot[cot] || 0;
-    const total = sommets + Math.floor(moities / 2); // paires de moitiés seulement
-    if (total > 0) countByCot[cot] = total;
+    let niveau = -1;
+    if (sommets >= 3) niveau = 3;
+    else if (sommets >= 2) niveau = 2;
+    else if (sommets >= 1 || moities >= 2) niveau = 1;
+    else if (moities >= 1) niveau = 0;
+    if (niveau >= 0) countByCot[cot] = niveau + 1; // on stocke 1-4 pour compat affichage
   }
 
   let bestNote = null;
   let bestNiveau = null;
 
-  // Calculer le meilleur score parmi toutes les cotations avec au moins 1 étoile
+  // Calculer le meilleur score parmi toutes les cotations avec au moins ½★
   for (const cot of ORDRE_COTATIONS) {
     const count = countByCot[cot] || 0;
     if (count === 0) continue;
-    const stars = Math.min(count, 4);
+    const starIdx = count - 1; // 0=½★ 1=⭐ 2=⭐⭐ 3=⭐⭐⭐
     const vals = isGarcon
       ? (BAREME_GARCONS.find(r => r.cot === cot) || {}).vals
       : getFilleVals(cot);
     if (!vals) continue;
-    const pts = vals[stars - 1];
-    if (bestNote === null || pts > bestNote) { bestNote = pts; bestNiveau = stars - 1; }
+    const pts = vals[starIdx];
+    if (bestNote === null || pts > bestNote) { bestNote = pts; bestNiveau = starIdx; }
   }
-
-  // Une moitié seule (impaire) ne rapporte AUCUN point — on ne cherche pas à valoriser les moitiés isolées
 
   return { note: bestNote, niveau: bestNiveau, countByCot };
 }
@@ -2084,15 +2093,18 @@ function renderModal() {
 
   sbEl.innerHTML = '<div class="sub-label" style="margin-top:10px">ÉTOILES PAR COTATION</div>' +
     cotsWithVoies.map(cot => {
-      const count = countByCot[cot]||0;
-      const stars = Math.min(count, 4);
-      const dots = Array.from({length:4},(_,i) =>
-        `<span class="star-dot ${i<stars?'filled':'empty'}">${i<stars?'★':'☆'}</span>`).join('');
-      return `<div class="star-row"><span class="star-cot-lbl">${cot}</span><div class="star-dots">${dots}</div><span style="font-size:11px;color:var(--dim);margin-left:6px">${count} voie${count>1?'s':''}</span></div>`;
+      const count = countByCot[cot]||0; // 1=½★ 2=⭐ 3=⭐⭐ 4=⭐⭐⭐ (not used, max 4)
+      const starIdx = count - 1; // 0..3
+      const halfSVG = `<svg viewBox="0 0 24 24" width="14" height="14" style="display:inline-block;vertical-align:-2px"><defs><linearGradient id="hsgm${cot}"><stop offset="50%" stop-color="var(--star)"/><stop offset="50%" stop-color="none" stop-opacity="0"/></linearGradient></defs><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" fill="url(#hsgm${cot})" stroke="var(--star)" stroke-width="1.5"/></svg>`;
+      const labels = [halfSVG, '⭐', '⭐⭐', '⭐⭐⭐'];
+      const label = labels[starIdx] || halfSVG;
+      const desc = ['1 moitié','1 sommet ou 2 moitiés','2 sommets','3 sommets'][starIdx] || '';
+      return `<div class="star-row"><span class="star-cot-lbl">${cot}</span><span style="margin:0 6px">${label}</span><span style="font-size:11px;color:var(--dim)">${desc}</span></div>`;
     }).join('');
 
   if (note!==null) {
-    bpEl.innerHTML = `<div class="best-perf-bar"><div><div class="bp-label">MEILLEURE PERFORMANCE</div><div class="bp-val">${NIVEAU_LABELS[niveau]}</div></div><div class="bp-score">${note.toString().replace('.',',')}</div></div>`;
+    const starLabels = ['½★','⭐','⭐⭐','⭐⭐⭐'];
+    bpEl.innerHTML = `<div class="best-perf-bar"><div><div class="bp-label">MEILLEURE PERFORMANCE</div><div class="bp-val">${starLabels[niveau]}</div></div><div class="bp-score">${note.toString().replace('.',',')}</div></div>`;
   } else { bpEl.innerHTML=''; }
 }
 
@@ -2116,15 +2128,22 @@ function updateNomoResult() {
   if (nomoSelCot===null||nomoSelStar===null) { bar.classList.remove('visible'); return; }
   const row = getBaremeRows()[nomoSelCot];
   const val = row.vals[nomoSelStar];
+  const starLabel = ['½ étoile','1 étoile','2 étoiles','3 étoiles'][nomoSelStar];
   document.getElementById('nomo-result-label').textContent =
-    `${row.cot} × ${['1 étoile','2 étoiles','3 étoiles','4 étoiles'][nomoSelStar]} → ${NIVEAU_LABELS[nomoSelStar]}`;
+    `${row.cot} × ${starLabel} → ${NIVEAU_LABELS[nomoSelStar]}`;
   document.getElementById('nomo-result-score').textContent = val.toString().replace('.',',');
   bar.classList.add('visible');
 }
 
 function renderNomoTable() {
   const rows = getBaremeRows();
-  const starHeaders = ['⭐ 1 étoile','⭐⭐ 2 étoiles','⭐⭐⭐ 3 étoiles','⭐⭐⭐⭐ 4 étoiles'];
+  const halfStarSVG = `<svg viewBox="0 0 24 24" width="13" height="13" style="display:inline-block;vertical-align:-2px"><defs><linearGradient id="hsg2"><stop offset="50%" stop-color="#ffd60a"/><stop offset="50%" stop-color="none" stop-opacity="0"/></linearGradient></defs><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" fill="url(#hsg2)" stroke="#ffd60a" stroke-width="1.5"/></svg>`;
+  const starHeaders = [
+    `${halfStarSVG} ½ étoile`,
+    `⭐ 1 étoile`,
+    `⭐⭐ 2 étoiles`,
+    `⭐⭐⭐ 3 étoiles`
+  ];
   let html = '<thead><tr><th style="min-width:90px">Cotation</th>';
   starHeaders.forEach((h,i) => {
     const sc = nomoSelStar===i ? 'sel-row' : '';
@@ -2164,9 +2183,11 @@ function renderResume() {
       const nbEssais = s.essais.filter(e => e.sommet!==null).length;
       const cots = Object.keys(countByCot);
       const maxCot = cots.length>0 ? cots.sort((a,b)=>ORDRE_COTATIONS.indexOf(a)-ORDRE_COTATIONS.indexOf(b))[0] : '—';
-      const maxStars = maxCot!=='—' ? Math.min(countByCot[maxCot],4) : 0;
+      const starIdx = maxCot!=='—' ? (countByCot[maxCot]||1)-1 : -1;
       const niveauCls = niveau!==null ? ['n-insuf','n-fragile','n-satisf','n-bien'][niveau] : 'n-none';
-      const niveauLabel = niveau!==null ? ['Insuf.','Fragile','Satisf.','Très bien'][niveau] : '—';
+      const starShort = ['½★','⭐','⭐⭐','⭐⭐⭐'];
+      const niveauLabel = niveau!==null ? starShort[niveau] : '—';
+      const starDisplay = starIdx>=0 ? starShort[starIdx] : '—';
       const afl2 = computeAFL2(s);
       const total20 = (note !== null || afl2 > 0) ? +((note ?? 0) + afl2).toFixed(1) : null;
       html += `<tr>
@@ -2174,7 +2195,7 @@ function renderResume() {
         <td style="font-size:12px">${s.gender==='garcon'?'👦':'👧'}</td>
         <td>${nbEssais}</td>
         <td><span style="font-family:'Bebas Neue',sans-serif;font-size:14px">${maxCot}</span></td>
-        <td>${maxStars>0?'⭐'.repeat(maxStars):'—'}</td>
+        <td>${starDisplay}</td>
         <td><span class="niveau-badge ${niveauCls}">${niveauLabel}</span></td>
         <td style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--rope2)">${note!==null?note.toString().replace('.',','):'—'}</td>
         <td style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:#52b788">${afl2}/6</td>
@@ -2220,8 +2241,6 @@ function loadJSON(event) {
 }
 
 function exportPDF() {
-  freezeAllEssais();
-  showToast('🔒 Tous les essais ont été figés après export PDF');
   const pw = window.open('', '_blank');
   if (!pw) { alert('Autorisez les popups pour exporter en PDF.'); return; }
   let rows = '';
@@ -2232,8 +2251,10 @@ function exportPDF() {
       const nbEssais = s.essais.filter(e=>e.sommet!==null).length;
       const cots = Object.keys(countByCot);
       const maxCot = cots.length>0 ? cots.sort((a,b)=>ORDRE_COTATIONS.indexOf(a)-ORDRE_COTATIONS.indexOf(b))[0] : '—';
-      const maxStars = maxCot!=='—' ? Math.min(countByCot[maxCot],4) : 0;
-      const niveauLabel = niveau!==null ? ['Insuf.','Fragile','Satisf.','Très bien'][niveau] : '—';
+      const starIdx = maxCot!=='—' ? (countByCot[maxCot]||1)-1 : -1;
+      const starShortPdf = ['½★','★','★★','★★★'];
+      const starDisplay = starIdx>=0 ? starShortPdf[starIdx] : '—';
+      const niveauLabel = niveau!==null ? starShortPdf[niveau] : '—';
       const nBg = niveau!==null ? ['#ffd0d0','#ffe5cc','#d0f0e0','#b0e0c0'][niveau] : '#f0f0f0';
       const nClr = niveau!==null ? ['#900','#c55','#2d6a4f','#1a5c3a'][niveau] : '#666';
       const afl2 = computeAFL2(s);
@@ -2243,7 +2264,7 @@ function exportPDF() {
         <td>${s.gender==='garcon'?'Garçon':'Fille'}</td>
         <td>${nbEssais}</td>
         <td>${maxCot}</td>
-        <td>${maxStars>0?'★'.repeat(maxStars):'—'}</td>
+        <td>${starDisplay}</td>
         <td style="background:${nBg};color:${nClr};font-weight:700">${niveauLabel}</td>
         <td style="font-weight:700;color:#e85d04">${note!==null?note.toString().replace('.',','):'—'}</td>
         <td style="font-weight:700;color:#2d6a4f">${afl2}/6</td>
